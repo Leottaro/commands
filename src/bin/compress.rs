@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::{fs::read_dir, process::exit};
 
 use flate2::write::GzEncoder;
@@ -11,17 +12,20 @@ use zsh_commands::{match_path, Inputs};
 fn tar_dir_without_gitignore(
     src_path: &PathBuf,
     tar_path: &PathBuf,
-    tar: &mut tar::Builder<GzEncoder<BufWriter<File>>>,
+    tar: Arc<Mutex<tar::Builder<GzEncoder<BufWriter<File>>>>>,
     my_ignored_paths: HashSet<PathBuf>,
     verbose: bool,
 ) {
     if verbose {
         println!("taring folder {:?} as path {:?}", src_path, tar_path);
     }
-    tar.append_dir(&tar_path, &src_path).expect(&format!(
-        "Unable to add folder {:?} to the tar archive as path {:?}",
-        src_path, tar_path
-    ));
+    {
+        let mut usable_tar = tar.lock().unwrap();
+        usable_tar.append_dir(&tar_path, &src_path).expect(&format!(
+            "Unable to add folder {:?} to the tar archive as path {:?}",
+            src_path, tar_path
+        ));
+    }
 
     let paths: Vec<PathBuf> = read_dir(src_path)
         .expect(&format!("Unable to read the directory {:?}", src_path))
@@ -61,68 +65,83 @@ fn tar_dir_without_gitignore(
         }
     }
 
-    for from_path in paths {
-        let name = from_path.file_name().expect(&format!(
-            "Unable to get file_name from path {:?}",
-            from_path
-        ));
-        let tar_path = tar_path.join(name);
+    let join_handles = paths.into_iter().map(|from_path| {
+        let my_ignored_paths = my_ignored_paths.clone();
+        let new_ignored_paths = new_ignored_paths.clone();
+        let tar_path = tar_path.clone();
+        let tar = Arc::clone(&tar);
+        std::thread::spawn(move || {
+            let name = from_path.file_name().expect(&format!(
+                "Unable to get file_name from path {:?}",
+                from_path
+            ));
+            let tar_path = tar_path.join(name);
 
-        if new_ignored_paths
-            .iter()
-            .any(|ignore| match_path(ignore, &PathBuf::from(name)))
-            || my_ignored_paths
+            if new_ignored_paths
                 .iter()
                 .any(|ignore| match_path(ignore, &PathBuf::from(name)))
-        {
-            continue;
-        }
-
-        if from_path.is_file() {
-            if name.eq(".DS_Store") {
-                continue;
+                || my_ignored_paths
+                    .iter()
+                    .any(|ignore| match_path(ignore, &PathBuf::from(name)))
+            {
+                return;
             }
-            if verbose {
-                println!("taring file {:?} as path {:?}", from_path, tar_path);
-            }
-            let mut file = File::open(&from_path)
-                .expect(&format!("Unable to open file to tar {:?}", from_path));
-            tar.append_file(&tar_path, &mut file).expect(&format!(
-                "Unable to add file {:?} to the tar archive as path {:?}",
-                from_path, tar_path
-            ));
-            continue;
-        }
 
-        let this_path_to_ignore: HashSet<PathBuf> = new_ignored_paths
-            .iter()
-            .filter_map(|path| {
-                let new_path = path.iter().skip(1).collect::<PathBuf>();
-                if new_path.as_os_str().eq("") {
-                    return None;
+            if from_path.is_file() {
+                if name.eq(".DS_Store") {
+                    return;
                 }
-                if let Some(parent) = path.iter().next() {
-                    if parent.eq("**") || parent.eq(name) {
+                if verbose {
+                    println!("taring file {:?} as path {:?}", from_path, tar_path);
+                }
+                let mut file = File::open(&from_path)
+                    .expect(&format!("Unable to open file to tar {:?}", from_path));
+                {
+                    let mut usable_tar = tar.lock().unwrap();
+                    usable_tar
+                        .append_file(&tar_path, &mut file)
+                        .expect(&format!(
+                            "Unable to add file {:?} to the tar archive as path {:?}",
+                            from_path, tar_path
+                        ));
+                }
+                return;
+            }
+
+            let this_path_to_ignore: HashSet<PathBuf> = new_ignored_paths
+                .iter()
+                .filter_map(|path| {
+                    let new_path = path.iter().skip(1).collect::<PathBuf>();
+                    if new_path.as_os_str().eq("") {
+                        return None;
+                    }
+                    if let Some(parent) = path.iter().next() {
+                        if parent.eq("**") || parent.eq(name) {
+                            return Some(new_path);
+                        }
+                    }
+                    if match_path(&path, &PathBuf::from(name)) {
                         return Some(new_path);
                     }
-                }
-                if match_path(&path, &PathBuf::from(name)) {
-                    return Some(new_path);
-                }
 
-                None
-            })
-            .chain(my_ignored_paths.iter().filter_map(|path| {
-                let new_path = path.iter().skip(1).collect::<PathBuf>();
-                if new_path.as_os_str().eq("") {
                     None
-                } else {
-                    Some(new_path)
-                }
-            }))
-            .collect();
+                })
+                .chain(my_ignored_paths.iter().filter_map(|path| {
+                    let new_path = path.iter().skip(1).collect::<PathBuf>();
+                    if new_path.as_os_str().eq("") {
+                        None
+                    } else {
+                        Some(new_path)
+                    }
+                }))
+                .collect();
 
-        tar_dir_without_gitignore(&from_path, &tar_path, tar, this_path_to_ignore, verbose);
+            tar_dir_without_gitignore(&from_path, &tar_path, tar, this_path_to_ignore, verbose);
+        })
+    });
+
+    for handle in join_handles {
+        handle.join().expect("Thread panicked");
     }
 }
 
@@ -130,13 +149,24 @@ fn main() {
     let inputs = Inputs::parse();
     if inputs.contains_help || inputs.arguments.is_empty() {
         println!(
-            "{} <path1> [path2] ...\nOPTIONS: \n\t\n\t-v --verbose \toutput everything",
+            "{} <path1> [path2] ...\nOPTIONS: \n\t--compression=[0-9] \tadjust the compression level (default: 6)\n\t-v --verbose     \toutput everything",
             inputs.name
         );
         exit(0);
     }
 
     let verbose = inputs.options.contains_key("v") || inputs.options.contains_key("verbose");
+    let compression_level = {
+        let compression = inputs
+            .options
+            .get("compression")
+            .and_then(|str| Some(str.as_str()))
+            .unwrap_or("6");
+        let compresison_number = compression.parse::<u32>().expect(&format!(
+            "Unable to read the compression level of {compression}"
+        ));
+        Compression::new(compresison_number)
+    };
 
     let existing_paths: Vec<PathBuf> = inputs
         .arguments
@@ -167,13 +197,14 @@ fn main() {
         println!("taring {:?} as {:?}", src_filename, tar_path);
         let tar_gz =
             File::create(&tar_path).expect(&format!("Unable to create {:?} achive", tar_path));
-        let encoder = GzEncoder::new(BufWriter::new(tar_gz), Compression::default());
-        let mut tar: tar::Builder<GzEncoder<BufWriter<File>>> = tar::Builder::new(encoder);
+        let encoder = GzEncoder::new(BufWriter::new(tar_gz), compression_level);
+        let tar = Arc::new(Mutex::new(tar::Builder::new(encoder)));
+        tar.lock().unwrap().mode(tar::HeaderMode::Deterministic);
 
         tar_dir_without_gitignore(
             &src_path,
             &PathBuf::from(src_filename),
-            &mut tar,
+            tar,
             HashSet::new(),
             verbose,
         );
