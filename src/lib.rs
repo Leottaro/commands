@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env::args, ffi::OsString, path::PathBuf, process::exit};
+use std::{collections::HashMap, env::args, path::PathBuf, process::exit};
 
 pub struct Inputs {
     pub name: String,
@@ -11,7 +11,9 @@ impl Inputs {
     pub fn parse() -> Self {
         let mut args = args();
 
-        let name = args.next().unwrap();
+        let name = args
+            .next()
+            .expect(&format!("Unable to get first arg from Args {:?}", args));
         let mut arguments = Vec::new();
         let mut options = HashMap::new();
         let mut contains_help = false;
@@ -22,18 +24,26 @@ impl Inputs {
                 continue;
             }
 
-            let chars: Vec<char> = arg.chars().collect();
-            if !chars[0].eq(&'-') {
+            let arg_chars = arg.chars();
+            if arg.starts_with("--") {
+                let arg = arg_chars.skip(2).collect::<String>();
+                let splits: Vec<&str> = arg.split('=').collect();
+                if splits.len() > 2 {
+                    eprintln!(
+                        "Error while parsing options: \nSyntax error in arg {}: splits = {:?}",
+                        arg, splits
+                    );
+                    exit(1);
+                }
+                options.insert(
+                    splits[0].to_string(),
+                    splits.get(1).unwrap_or(&"").to_string(),
+                );
+            } else if arg.starts_with("-") {
+                options.insert(arg_chars.skip(1).collect(), "".to_string());
+            } else {
                 arguments.push(arg);
-                continue;
             }
-
-            let splits: Vec<&str> = arg.trim_matches('-').split('=').collect();
-            if splits.len() != 2 {
-                eprintln!("Error while parsing options: Syntax error");
-                exit(1);
-            }
-            options.insert(splits[0].to_string(), splits[1].to_string());
         }
 
         Self {
@@ -53,4 +63,18 @@ impl std::fmt::Display for Inputs {
             self.name, self.arguments, self.options, self.contains_help
         )
     }
+}
+
+pub fn match_path(path1: &PathBuf, path2: &PathBuf) -> bool {
+    if path1.eq(path2) {
+        return true;
+    }
+
+    if let (Some(path1), Some(path2)) = (path1.to_str(), path2.to_str()) {
+        if let Ok(pattern) = glob::Pattern::new(path1) {
+            return pattern.matches(path2);
+        }
+    }
+
+    false
 }
