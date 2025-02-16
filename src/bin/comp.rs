@@ -5,9 +5,9 @@ use std::{fs::read_dir, process::exit};
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use leottaro_commands::{match_path, Inputs};
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter};
-use leottaro_commands::{match_path, Inputs};
 
 fn tar_dir_without_gitignore(
     src_path: &PathBuf,
@@ -54,13 +54,17 @@ fn tar_dir_without_gitignore(
 
         for line in reader.lines() {
             if let Ok(line) = line {
-                let line_path = PathBuf::from(line);
-                new_ignored_paths.insert(
-                    line_path
-                        .strip_prefix("./")
-                        .map(|path| path.to_path_buf())
-                        .unwrap_or(line_path),
-                );
+                let line_path = {
+                    let path = PathBuf::from(line);
+                    if path.starts_with("./") {
+                        path.strip_prefix("./").unwrap().to_path_buf()
+                    } else if path.starts_with("/") {
+                        path.strip_prefix("/").unwrap().to_path_buf()
+                    } else {
+                        path
+                    }
+                };
+                new_ignored_paths.insert(line_path);
             }
         }
     }
