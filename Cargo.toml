@@ -2,6 +2,12 @@
 name = "leottaro_commands"
 version = "1.0.0"
 edition = "2021"
+authors = ["Leottaro <leo.hafdane@gmail.com>"]
+description = "some simple commands"
+repository = "https://github.com/Leottaro/commands"
+readme = "README.md"
+license = "GPL-3.0"
+license-file = "LICENSE"
 
 [dependencies]
 glob = "0.3.2"
