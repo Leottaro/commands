@@ -7,7 +7,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter};
-use zsh_commands::{match_path, Inputs};
+use leottaro_commands::{match_path, Inputs};
 
 fn tar_dir_without_gitignore(
     src_path: &PathBuf,

@@ -1,6 +1,6 @@
 use std::{env::set_current_dir, path::Path, process::exit};
 
-use zsh_commands::Inputs;
+use leottaro_commands::Inputs;
 
 fn main() {
     let inputs = Inputs::parse();
