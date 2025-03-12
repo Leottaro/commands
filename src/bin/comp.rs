@@ -21,21 +21,21 @@ fn tar_dir_without_gitignore(
     }
     {
         let mut usable_tar = tar.lock().unwrap();
-        usable_tar.append_dir(&tar_path, &src_path).expect(&format!(
-            "Unable to add folder {:?} to the tar archive as path {:?}",
-            src_path, tar_path
-        ));
+        usable_tar
+            .append_dir(tar_path, src_path)
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Unable to add folder {:?} to the tar archive as path {:?}",
+                    src_path, tar_path
+                )
+            });
     }
 
     let paths: Vec<PathBuf> = read_dir(src_path)
-        .expect(&format!("Unable to read the directory {:?}", src_path))
-        .into_iter()
+        .unwrap_or_else(|_| panic!("Unable to read the directory {:?}", src_path))
         .map(|entry| {
             entry
-                .expect(&format!(
-                    "Unable to read entry from directory {:?}",
-                    src_path
-                ))
+                .unwrap_or_else(|_| panic!("Unable to read entry from directory {:?}", src_path))
                 .path()
         })
         .collect();
@@ -44,7 +44,7 @@ fn tar_dir_without_gitignore(
     for path in paths.iter() {
         if !path
             .file_name()
-            .expect(&format!("Unable to get file_name from path {:?}", path))
+            .unwrap_or_else(|| panic!("Unable to get file_name from path {:?}", path))
             .eq(".gitignore")
         {
             continue;
@@ -52,20 +52,18 @@ fn tar_dir_without_gitignore(
         let file = File::open(path).expect("Unable to open .gitignore file");
         let reader = BufReader::new(file);
 
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                let line_path = {
-                    let path = PathBuf::from(line);
-                    if path.starts_with("./") {
-                        path.strip_prefix("./").unwrap().to_path_buf()
-                    } else if path.starts_with("/") {
-                        path.strip_prefix("/").unwrap().to_path_buf()
-                    } else {
-                        path
-                    }
-                };
-                new_ignored_paths.insert(line_path);
-            }
+        for line in reader.lines().map_while(Result::ok) {
+            let line_path = {
+                let path = PathBuf::from(line);
+                if path.starts_with("./") {
+                    path.strip_prefix("./").unwrap().to_path_buf()
+                } else if path.starts_with("/") {
+                    path.strip_prefix("/").unwrap().to_path_buf()
+                } else {
+                    path
+                }
+            };
+            new_ignored_paths.insert(line_path);
         }
     }
 
@@ -75,10 +73,9 @@ fn tar_dir_without_gitignore(
         let tar_path = tar_path.clone();
         let tar = Arc::clone(&tar);
         std::thread::spawn(move || {
-            let name = from_path.file_name().expect(&format!(
-                "Unable to get file_name from path {:?}",
-                from_path
-            ));
+            let name = from_path
+                .file_name()
+                .unwrap_or_else(|| panic!("Unable to get file_name from path {:?}", from_path));
             let tar_path = tar_path.join(name);
 
             if new_ignored_paths
@@ -99,15 +96,17 @@ fn tar_dir_without_gitignore(
                     println!("taring file {:?} as path {:?}", from_path, tar_path);
                 }
                 let mut file = File::open(&from_path)
-                    .expect(&format!("Unable to open file to tar {:?}", from_path));
+                    .unwrap_or_else(|_| panic!("Unable to open file to tar {:?}", from_path));
                 {
                     let mut usable_tar = tar.lock().unwrap();
                     usable_tar
                         .append_file(&tar_path, &mut file)
-                        .expect(&format!(
-                            "Unable to add file {:?} to the tar archive as path {:?}",
-                            from_path, tar_path
-                        ));
+                        .unwrap_or_else(|_| {
+                            panic!(
+                                "Unable to add file {:?} to the tar archive as path {:?}",
+                                from_path, tar_path
+                            )
+                        });
                 }
                 return;
             }
@@ -116,7 +115,7 @@ fn tar_dir_without_gitignore(
                 .iter()
                 .filter_map(|path| {
                     let new_path = path.iter().skip(1).collect::<PathBuf>();
-                    if new_path.as_os_str().eq("") {
+                    if new_path.as_os_str().is_empty() {
                         return None;
                     }
                     if let Some(parent) = path.iter().next() {
@@ -124,7 +123,7 @@ fn tar_dir_without_gitignore(
                             return Some(new_path);
                         }
                     }
-                    if match_path(&path, &PathBuf::from(name)) {
+                    if match_path(path, &PathBuf::from(name)) {
                         return Some(new_path);
                     }
 
@@ -132,7 +131,7 @@ fn tar_dir_without_gitignore(
                 })
                 .chain(my_ignored_paths.iter().filter_map(|path| {
                     let new_path = path.iter().skip(1).collect::<PathBuf>();
-                    if new_path.as_os_str().eq("") {
+                    if new_path.as_os_str().is_empty() {
                         None
                     } else {
                         Some(new_path)
@@ -164,11 +163,11 @@ fn main() {
         let compression = inputs
             .options
             .get("compression")
-            .and_then(|str| Some(str.as_str()))
+            .map(|str| str.as_str())
             .unwrap_or("6");
-        let compresison_number = compression.parse::<u32>().expect(&format!(
-            "Unable to read the compression level of {compression}"
-        ));
+        let compresison_number = compression
+            .parse::<u32>()
+            .unwrap_or_else(|_| panic!("Unable to read the compression level of {compression}"));
         Compression::new(compresison_number)
     };
 
@@ -191,16 +190,16 @@ fn main() {
     for src_path in existing_paths {
         let src_path = src_path
             .canonicalize()
-            .expect(&format!("Unable to get absolute path of {:?}", src_path));
+            .unwrap_or_else(|_| panic!("Unable to get absolute path of {:?}", src_path));
         let src_filename = src_path
             .file_name()
-            .expect(&format!("Unable to get {:?} filename", src_path));
+            .unwrap_or_else(|| panic!("Unable to get {:?} filename", src_path));
 
         // Compress the copied directory
         let tar_path = PathBuf::from(src_filename).with_extension("tar.gz");
         println!("taring {:?} as {:?}", src_filename, tar_path);
-        let tar_gz =
-            File::create(&tar_path).expect(&format!("Unable to create {:?} achive", tar_path));
+        let tar_gz = File::create(&tar_path)
+            .unwrap_or_else(|_| panic!("Unable to create {:?} achive", tar_path));
         let encoder = GzEncoder::new(BufWriter::new(tar_gz), compression_level);
         let tar = Arc::new(Mutex::new(tar::Builder::new(encoder)));
         tar.lock().unwrap().mode(tar::HeaderMode::Deterministic);

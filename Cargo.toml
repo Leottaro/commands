@@ -1,12 +1,11 @@
 [package]
 name = "leottaro_commands"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 authors = ["Leottaro <leo.hafdane@gmail.com>"]
 description = "some simple commands"
 repository = "https://github.com/Leottaro/commands"
 readme = "README.md"
-license = "GPL-3.0"
 license-file = "LICENSE"
 
 [dependencies]

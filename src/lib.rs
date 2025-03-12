@@ -13,12 +13,12 @@ impl Inputs {
 
         let name = args
             .next()
-            .expect(&format!("Unable to get first arg from Args {:?}", args));
+            .unwrap_or_else(|| panic!("Unable to get first arg from Args {:?}", args));
         let mut arguments = Vec::new();
         let mut options = HashMap::new();
         let mut contains_help = false;
 
-        for arg in args.into_iter() {
+        for arg in args {
             if arg == "--help" || arg == "-h" {
                 contains_help = true;
                 continue;
